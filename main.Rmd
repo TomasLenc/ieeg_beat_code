@@ -1,0 +1,1804 @@
+---
+title: "`r response` (rhythm-`r rhythm`)"
+author: "Tomas Lenc"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document: 
+    code_folding: show
+    toc: true
+    toc_float: 
+      collapsed: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+source('config.R')
+source('lib/utils.R')
+source('lib/figures.R')
+
+```
+
+
+# Parameters 
+
+```{r}
+task <- 'listen'
+
+# responsiveness z-score threshold 
+z_snr_thr = ifelse(str_detect(response, 'biLFP'), qnorm(1-0.05), qnorm(1-0.01))
+
+# plotting y axis limits 
+if (rhythm=='sp') {
+    ylims_fft <- c(-1.1, 1.2)# c(-0.8, 1.5) 
+    ylims_acf <- c(-1.1, 1.2)
+} else if (rhythm=='wp') {
+    ylims_fft <- c(-0.7, 0.7) # c(-0.7, 1.2)
+    ylims_acf <- c(-1, 1)
+}
+
+# file names and paths 
+save_prefix <- sprintf('response-%s_rhythm-%s_task-%s', response, rhythm, task)
+anat_prefix <- ifelse(str_detect(response, 'bi'), 'bipolar_elecs_all', 'TDT_elecs_all')
+    
+```
+
+<br> 
+
+# Stimulus and brainstem model 
+
+Stimulus envelope.  
+```{r}
+# load stimulus envelope  
+df_hilbert_fft <- read.csv(file.path(feat_path, 'response-hilbert_fftAggrFreq.csv'))
+df_hilbert_fft <- fixFactors(df_hilbert_fft)
+
+df_hilbert_acf <- read.csv(file.path(feat_path, 'response-hilbert_aggrACFtrial.csv'))
+df_hilbert_acf <- fixFactors(df_hilbert_acf)
+df_hilbert_acf <- select(df_hilbert_acf, rhythm, z_meterRel)
+
+sprintf('Stimulus envelope FFT-based beat index = %.2f', 
+        filter(df_hilbert_fft, rhythm==!!rhythm) %>% pull(z_meterRel))
+
+sprintf('Stimulus envelope ACF-based beat index = %.2f', 
+        filter(df_hilbert_acf, rhythm==!!rhythm) %>% pull(z_meterRel))
+```
+
+<br> 
+
+Spectral flux.  
+
+```{r}
+df_flux_fft <- read.csv(file.path(feat_path, 'response-flux_fftAggrFreq.csv'))
+df_flux_fft <- fixFactors(df_flux_fft)
+
+df_flux_acf <- read.csv(file.path(feat_path, 'response-flux_aggrACFtrial.csv'))
+df_flux_acf <- fixFactors(df_flux_acf)
+df_flux_acf <- select(df_flux_acf, rhythm, z_meterRel)
+
+sprintf('Spectral flux FFT-based beat index = %.2f', 
+        filter(df_flux_fft, rhythm==!!rhythm) %>% pull(z_meterRel))
+
+sprintf('Spectral flux ACF-based beat index = %.2f', 
+        filter(df_flux_acf, rhythm==!!rhythm) %>% pull(z_meterRel))
+```
+
+<br> 
+
+Brainstem model.  
+```{r}
+if (auditory_model_type == 'an'){
+    
+    df_urear_fft <- read.csv(file.path(feat_path, 'response-an_fftAggrFreq.csv'))
+    df_urear_fft <- fixFactors(df_urear_fft)
+    
+    df_urear_acf <- read.csv(file.path(feat_path, 'response-an_aggrACFtrial.csv'))
+    df_urear_acf <- fixFactors(df_urear_acf)
+
+} else if (auditory_model_type == 'ic'){
+    
+    df_urear_fft <- read.csv(file.path(feat_path, 'response-ic_fftAggrFreq.csv'))
+    df_urear_fft <- fixFactors(df_urear_fft)
+    
+    df_urear_acf <- read.csv(file.path(feat_path, 'response-ic_aggrACFtrial.csv'))
+    df_urear_acf <- fixFactors(df_urear_acf)
+
+}
+
+df_urear_acf <- select(df_urear_acf, rhythm, z_meterRel)
+
+sprintf('Brainstem model FFT-based beat index = %.2f', 
+        filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel))
+
+sprintf('Brainstem model ACF-based beat index = %.2f', 
+        filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel))
+
+```
+
+
+
+
+<br> 
+
+# Contact responsiveness
+
+```{r}
+
+# =======================
+# contact responsiveness
+# =======================
+
+# prepare dataframe with a list of responsive contacts 
+df_resp <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_resp <- fixFactors(df_resp)
+
+# subset only listening wp 
+df_resp <- filter(df_resp, task=='listen' & rhythm=='wp')
+
+# get info about responsive contacts 
+df_resp$responsive <- df_resp$z_snr > z_snr_thr
+df_resp <- select(df_resp, subject, elec, responsive)
+    
+# prepare dataframe with z-snr 
+df_zsnr_all <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_zsnr_all <- fixFactors(df_zsnr_all)
+
+df_zsnr_all <- dplyr::inner_join(df_zsnr_all, df_resp)
+df_zsnr_all <- df_zsnr_all %>% select(subject, elec, rhythm, task, z_snr, responsive)
+
+# subset responsive 
+df_zsnr_responsive <- df_zsnr_all %>% filter(responsive == TRUE)
+
+# load responses to distortion products above 130 Hz 
+df_crossmod <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_ffrAggrCrossmod.csv', response)))
+df_crossmod <- fixFactors(df_crossmod)
+
+# subset responsive 
+df_crossmod_responsive <- df_crossmod %>% 
+    filter(task=='listen' & rhythm=='wp' & z_snr > z_snr_thr) %>% 
+    select(subject, elec, z_snr)
+
+```
+
+
+<br> 
+
+# Global contact counts 
+
+```{r}
+
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+# N participants
+N_sub <- length(unique(df_anat$subject))
+
+# total N electrodes 
+N_elec <- nrow(df_anat)
+
+# N in gray matter
+N_elec_in_gray <- df_anat %>% filter(in_gray==1) %>% nrow()
+
+# N in gray matter per hemisphere
+N_elec_in_gray_per_hem <- df_anat %>% filter(in_gray==1) %>% count(hem)
+
+# total N responsive 
+N_elec_resp <- sum(df_zsnr_all$responsive)
+
+# N across all auditory ROIs
+N_elec_auditory <- df_anat %>% filter(custom %in% auditory_rois & custom != 'unknown') %>% nrow
+N_elec_auditory_per_sub <- df_anat %>% filter(custom %in% auditory_rois & custom != 'unknown') %>% count(subject)
+
+# N across all higher-level ROIs
+N_elec_assoc <- df_anat %>% filter(custom %in% assoc_rois & custom != 'unknown') %>% nrow
+N_elec_assoc_per_sub <- df_anat %>% filter(custom %in% assoc_rois & custom != 'unknown') %>% count(subject)
+
+# N contacts across all ROIs
+N_elec_rois <- df_anat %>% filter(custom != 'unknown') %>% nrow
+N_elec_rois_lh <- df_anat %>% filter(custom != 'unknown' & hem == 'lh') %>% nrow
+N_elec_rois_rh <- df_anat %>% filter(custom != 'unknown' & hem == 'rh') %>% nrow
+N_sub_rois <- df_anat %>% filter(custom != 'unknown') %>% count(subject)
+
+# how many electrode arrays were implanted in total 
+df <- filter(df_anat, custom != 'unknown')
+df$shaft <- str_extract(df$elec, '^[^0-9]+')
+df$sub_shaft <- str_c(df$subject, df$shaft, sep="_")
+N_shafts_rois <- length(unique(df$sub_shaft))
+
+sprintf('%d subjects', N_sub)
+sprintf('%d electrode arrays', N_shafts_rois)
+sprintf('%d contacts total', N_elec_rois)
+sprintf('%d contacts in LH', N_elec_rois_lh)
+sprintf('%d contacts in RH', N_elec_rois_rh)
+
+```
+
+
+
+<br> 
+
+# Primary auditory cortex (anatomically defined)
+
+Prepare contacts.  
+
+```{r}
+
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+# get only contacts in HG
+df_anat <- filter(df_anat, custom %in% c('HG'))
+
+```
+
+
+<br>   
+
+## FFT 
+
+```{r}
+# load FFT 
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset + add anatomy  
+df_data <- dplyr::inner_join(df_data, df_anat)
+sprintf('N contacts total = %d', nrow(df_data))
+
+# add responsiveness info 
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+sprintf('N contacts responsive = %d', nrow(df_data))
+
+```
+
+```{r}
+
+df_summary <- summarySE(df_data, measurevar='z_snr', groupvars=c('custom'))
+sprintf('mean zSNR in HG: %.2f, 95%% CI [%.2f, %.2f]',
+        df_summary$z_snr, 
+        df_summary$z_snr-df_summary$ci, 
+        df_summary$z_snr+df_summary$ci)
+
+```
+
+```{r}
+
+df_summary <- summarySE(df_data, measurevar='z_meterRel', groupvars=c('custom'))
+sprintf('mean beat index in HG: %.2f, 95%% CI [%.2f, %.2f]',
+        df_summary$z_meterRel, 
+        df_summary$z_meterRel-df_summary$ci, 
+        df_summary$z_meterRel+df_summary$ci)
+
+
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r}
+mu <- filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel)
+t.test(df_data$z_meterRel, mu=mu)
+```
+
+<br>   
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r}
+t.test(df_data$z_meterRel, mu=0)
+```
+
+<br>   
+
+Plot the data.  
+
+```{r, fig.height=4, fig.width=5}
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='custom', task='listen', hline_spec=mu,
+                    pntsize_ind='z_snr', pnt_col='lut', pnt_col_mean='black', hline_col='grey70',
+                    y_lims=ylims_fft, hline_zero=show_zero_line) 
+plt
+```
+
+
+
+<br>   
+
+## ACF 
+
+```{r}
+
+# load ACF trial 
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_aggrACFtrial.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset + add anatomy  
+df_data <- dplyr::inner_join(df_data, df_anat)
+nrow(df_data)
+
+# add responsiveness info 
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive, z_snr))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+nrow(df_data)
+
+
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r} 
+mu <- filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel)
+
+t.test(df_data$z_meterRel, mu=mu)
+
+
+```
+
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r}
+t.test(df_data$z_meterRel, mu=0)
+
+
+```
+
+<br>    
+
+Plot the data.    
+
+```{r, fig.height=4, fig.width=5}
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='custom', task='listen', hline_spec=mu,
+                    pntsize_ind='z_snr', pnt_col='lut', pnt_col_mean='black', hline_col='grey70',
+                    y_lims=ylims_acf, hline_zero=show_zero_line) 
+plt
+
+```
+
+
+
+
+<br> 
+
+# PAC (anatomically+functionally defined)
+
+
+<br>   
+
+Prepare contacts.  
+
+```{r}
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+# get only contacts in HG
+df_anat <- filter(df_anat, custom %in% c('HG'))
+```
+
+
+<br>   
+
+## FFT 
+
+```{r}
+# load FFT 
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset + add anatomy  
+df_data <- dplyr::inner_join(df_data, df_anat)
+sprintf('N contacts total = %d', nrow(df_data))
+
+# add responsiveness info 
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+sprintf('N contacts responsive = %d', nrow(df_data))
+
+# subset responsive to crossmod above 130 Hz 
+df_data <- dplyr::inner_join(df_data, select(df_crossmod_responsive, subject, elec))
+sprintf('N contacts responsive & above 130 Hz = %d', nrow(df_data))
+
+# save the data frame for plotting in python 
+write.csv(df_data, 
+          file.path(save_path, sprintf('%s_atlas-functionalPAC_fft.csv', save_prefix)), 
+          row.names=F)
+
+# let's keep this for later (to show PAC elecs in plots)
+df_pac <- df_data %>% select(subject, elec)
+
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r} 
+mu <- filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel)
+t.test(df_data$z_meterRel, mu=mu)
+```
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r} 
+t.test(df_data$z_meterRel, mu=0)
+```
+
+<br>    
+
+Plot the data.  
+
+```{r, fig.height=4, fig.width=5}
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='custom', task='listen', hline_spec=mu,
+                    pntsize_ind='z_snr', pnt_col='lut', pnt_col_mean='black', hline_col='grey70',
+                    y_lims=ylims_fft, hline_zero=show_zero_line) 
+
+plt
+```
+
+
+
+<br>   
+
+## ACF 
+
+```{r}
+# load ACF 
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_aggrACFtrial.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset + add anatomy  
+df_data <- dplyr::inner_join(df_data, df_anat)
+sprintf('N contacts total = %d', nrow(df_data))
+
+# add responsiveness info 
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive, z_snr))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+sprintf('N contacts responsive = %d', nrow(df_data))
+
+# subset responsive to crossmod above 100 Hz 
+df_data <- dplyr::inner_join(df_data, select(df_crossmod_responsive, subject, elec))
+sprintf('N contacts responsive & above 130 Hz = %d', nrow(df_data))
+
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r} 
+mu <- filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel)
+t.test(df_data$z_meterRel, mu=mu)
+```
+
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r} 
+t.test(df_data$z_meterRel, mu=0)
+```
+
+<br>    
+
+Plot the data.  
+
+```{r, fig.height=4, fig.width=5}
+# plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='custom', task='listen', hline_spec=mu,
+#                     pntsize_ind=1.2, pnt_col='lut', pnt_col_mean='black', hline_col='grey70',
+#                     y_lims=ylims_acf, hline_zero=show_zero_line) 
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='custom', task='listen', hline_spec=mu,
+                    pntsize_ind='z_snr', pnt_col='lut', pnt_col_mean='black', hline_col='grey70',
+                    y_lims=ylims_fft, hline_zero=show_zero_line) 
+
+plt
+```
+
+
+
+
+
+
+<br> 
+
+# Auditory ROIs
+
+
+
+<br>   
+
+Prepare contacts.  
+
+```{r}
+atlas_name <- 'auditory'
+
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+# select only in custom atlas 
+df_anat <- filter(df_anat, custom %in% auditory_rois)
+
+# set ROI order for plotting
+df_anat$custom <- factor(df_anat$custom, levels=auditory_rois)
+
+df_count_all <- count_elec_roi(df_anat, 'custom')
+
+# subset responsive 
+df_anat_resp <- dplyr::inner_join(df_anat, 
+                                  df_zsnr_responsive %>% 
+                                      filter(rhythm==!!rhythm & task==!!task) %>%
+                                      select(subject, elec))
+
+df_count_resp <- count_elec_roi(df_anat_resp, 'custom')
+```
+
+```{r}
+# show the output 
+pander(merge(df_count_all, df_count_resp, by='custom', suffixes=c('_total', '_responsive')) %>% rename(roi=custom))
+```
+
+```{r}
+
+plt <- plot_count_roi_resp(df_count_all, df_count_resp, 'custom')
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_responsive_counts', save_prefix, atlas_name)), 
+         plt, width=5, height=4, png=F)
+
+plt
+
+```
+
+
+
+<br>   
+
+## FFT
+
+```{r}
+
+# load FFT
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset + add anatomy  
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add responsiveness info 
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# add info about PAC 
+df_data$pac <- str_c(df_data$subject, df_data$elec) %in% str_c(df_pac$subject, df_pac$elec)
+stopifnot(length(df_data$pac) != nrow(df_pac))
+
+# save
+write.csv(df_data, 
+          file.path(save_path, sprintf('%s_atlas-%s_fft.csv', save_prefix, atlas_name)), 
+          row.names=F)
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+```
+
+<br>    
+
+```{r} 
+mu <- filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel)
+
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='roi', task='listen', 
+                    edgehighligh_name='pac', hline_spec=mu, hline_col='grey70', 
+                    pntsize_ind=2, pntalpha_ind=0.5, pnt_col='lut', dodge_width=0.2,
+                    pnt_col_mean='black', pntsize_mean=3, size_err=1.1, width_err=0,
+                    y_lims=ylims_fft, show_labels=F, hline_zero=show_zero_line)
+plt
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_urear-%s_zbeatFFT',
+                                          save_prefix, atlas_name, auditory_model_type)), 
+         plt, width=1.9, height=2.5, png=F)
+
+```
+
+<br>    
+
+Compare across ROIs.  
+
+```{r} 
+# mixed model 
+m <- lmer(z_meterRel ~ roi + (1|subject), data=df_data)
+prep_anova_for_print(Anova(m, test='F'))
+```
+
+```{r} 
+prep_bf_for_print(anovaBF(z_meterRel ~ roi + subject, data=df_data, whichRandom='subject', progress=F))
+```
+
+<br>    
+
+Posthoc tests.  
+
+```{r} 
+pander(pairwise_contrasts_one_cond(m, var='roi', adjust_method='fdr', return_ci=TRUE)$res)
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r} 
+df_against_mu <- ddply(df_data, c('roi'), ttest_against_mu, mu=mu)
+df_against_mu$pval <- p.adjust(df_against_mu$pval, method='fdr')
+df_against_mu$signif <- signifStars(df_against_mu$pval)
+pander(df_against_mu)
+
+```
+
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r} 
+df_against_0 <- ddply(df_data, c('roi'), ttest_against_mu, mu=0)
+df_against_0$pval <- p.adjust(df_against_0$pval, method='fdr')
+df_against_0$signif <- signifStars(df_against_0$pval)
+pander(df_against_0)
+
+```
+
+
+
+<br>   
+
+## ACF 
+
+```{r}
+# load ACF
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_aggrACFtrial.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset in custom atlas 
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# add info about PAC 
+df_data$pac <- str_c(df_data$subject, df_data$elec) %in% str_c(df_pac$subject, df_pac$elec)
+stopifnot(length(df_data$pac) != nrow(df_pac))
+
+# save
+write.csv(df_data, 
+          file.path(save_path, sprintf('%s_atlas-%s_acfTrial.csv', save_prefix, atlas_name)), 
+          row.names=F)
+
+# subset responsive 
+df_data <- df_data %>% filter(responsive == TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+```
+
+<br>    
+
+```{r} 
+
+mu <- filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel)
+
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='roi', task='listen', hline_spec=mu, hline_col='grey70', 
+                    edgehighligh_name='pac', pntsize_ind=2, pntalpha_ind=0.5, pnt_col='lut', dodge_width=0.2,
+                    pnt_col_mean='black', pntsize_mean=3, size_err=1.1, width_err=0,
+                    y_lims=ylims_acf, show_labels=F, hline_zero=show_zero_line) 
+plt
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_urear-%s_zbeatACFtrial', 
+                                          save_prefix, atlas_name, auditory_model_type)), 
+         plt, width=1.9, height=2.5, png=F)
+
+
+```
+
+<br>    
+ 
+Compare across regions.  
+
+```{r} 
+m <- lmer(z_meterRel ~ roi + (1|subject), data=df_data)
+prep_anova_for_print(Anova(m, test='F'))
+```
+
+<br>    
+
+
+```{r} 
+prep_bf_for_print(anovaBF(z_meterRel ~ roi + subject, data=df_data, whichRandom='subject', progress=F))
+```
+
+<br>    
+
+Posthoc tests.  
+
+```{r} 
+pander(pairwise_contrasts_one_cond(m, var='roi', adjust_method='fdr', return_ci=TRUE)$res)
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r} 
+df_against_mu <- ddply(df_data, c('roi'), ttest_against_mu, mu=mu)
+df_against_mu$pval <- p.adjust(df_against_mu$pval, method='fdr')
+df_against_mu$signif <- signifStars(df_against_mu$pval)
+pander(df_against_mu)
+```
+
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r} 
+df_against_0 <- ddply(df_data, c('roi'), ttest_against_mu, mu=0)
+df_against_0$pval <- p.adjust(df_against_0$pval, method='fdr')
+df_against_0$signif <- signifStars(df_against_0$pval)
+pander(df_against_0)
+```
+
+
+
+
+
+<br> 
+
+# Associative ROIs
+
+
+<br>
+
+Prepare contacts.  
+
+```{r}
+atlas_name <- 'assoc'
+
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+df_anat <- dplyr::filter(df_anat, custom %in% c('HG', assoc_rois))
+df_anat$custom <- droplevels(df_anat$custom)
+df_anat$custom <- factor(df_anat$custom, levels=c('HG', assoc_rois))
+
+# subset responsive 
+df_anat_resp <- dplyr::inner_join(df_anat, 
+                                  df_zsnr_responsive %>% 
+                                      filter(rhythm==!!rhythm & task==!!task) %>%
+                                      select(subject, elec))
+
+# check counts
+df_count_all <- count_elec_roi(df_anat, 'custom')
+df_count_resp <- count_elec_roi(df_anat_resp, 'custom')
+pander(merge(df_count_all, df_count_resp, by='custom', suffixes=c('_total', '_responsive')) %>% rename(roi=custom))
+```
+
+Remove ROIs without enough responsive contacts.  
+
+```{r}
+## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+if (response == 'LFP'){
+    # remove SFG (too little responsive electrodes)
+    bad_rois <- c('SFG')
+} else if (response == 'biLFP'){
+    # remove SFG and MFG (too little responsive electrodes)
+    bad_rois <- c('SFG', 'MFG')
+}
+df_anat <- filter(df_anat, !custom %in% bad_rois) %>% droplevels()
+df_anat_resp <- filter(df_anat_resp, !custom %in% bad_rois) %>% droplevels()
+## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+# recount
+df_count_all <- count_elec_roi(df_anat, 'custom')
+df_count_resp <- count_elec_roi(df_anat_resp, 'custom')
+pander(merge(df_count_all, df_count_resp, by='custom', suffixes=c('_total', '_responsive')) %>% rename(roi=custom))
+
+```
+
+```{r}
+
+plt <- plot_count_roi_resp(df_count_all, df_count_resp, 'custom')
+plt 
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_responsive_counts', save_prefix, atlas_name)),
+         plt, width=5, height=4, png=F)
+
+
+```
+
+
+
+<br>   
+
+## FFT 
+
+```{r}
+# load FFT
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# save
+write.csv(df_data, 
+          file.path(save_path, sprintf('%s_atlas-%s_fft.csv', save_prefix, atlas_name)), 
+          row.names=F)
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+```
+
+<br>    
+
+```{r} 
+
+mu <- filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel)
+
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='roi', task='listen', 
+                    hline_spec=mu, hline_col='grey70', 
+                    pntsize_ind=2, pntalpha_ind=0.5, pnt_col='lut', dodge_width=0.2,
+                    pnt_col_mean='black', pntsize_mean=3, size_err=1.1, width_err=0,
+                    y_lims=ylims_fft, show_labels=F, hline_zero=show_zero_line) 
+plt
+ 
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_urear-%s_zbeatFFT', 
+                                          save_prefix, auditory_model_type, atlas_name)), 
+         plt, width=1.9, height=2.5, png=F)
+
+```
+
+<br>    
+
+### Model beat index
+
+```{r} 
+# mixed model 
+m <- lmer(z_meterRel ~ roi + (1|subject), data=df_data)
+prep_anova_for_print(Anova(m, test='F'))
+```
+
+<br>    
+
+```{r} 
+prep_bf_for_print(anovaBF(z_meterRel ~ roi + subject, data=df_data, whichRandom='subject', progress=F))
+```
+
+<br>    
+
+```{r} 
+# posthoc 
+pander(pairwise_contrasts_one_cond(m, var='roi', adjust_method='fdr', return_ci=TRUE)$res)
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r} 
+df_against_mu <- ddply(df_data, c('roi'), ttest_against_mu, mu=mu)
+df_against_mu$pval <- p.adjust(df_against_mu$pval, method='fdr')
+df_against_mu$signif <- signifStars(df_against_mu$pval)
+pander(df_against_mu)
+```
+
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r} 
+df_against_0 <- ddply(df_data, c('roi'), ttest_against_mu, mu=0)
+df_against_0$pval <- p.adjust(df_against_0$pval, method='fdr')
+df_against_0$signif <- signifStars(df_against_0$pval)
+pander(df_against_0)
+```
+
+
+<br>  
+
+### Model SNR
+
+Model with z-snr directly as dependent variable.   
+
+```{r}
+# we'll do the same as when comparing beat index across associative ROIs
+df_data$z_snr_log <- log_trans(df_data$z_snr)
+
+# only for sp rhythm? (see Results section for context)
+m_zsnr <- lmer(z_snr_log ~ roi + (1|subject), data=df_data)
+
+prep_anova_for_print(Anova(m_zsnr, test='F'))
+```
+
+```{r}
+prep_bf_for_print(anovaBF(z_snr_log ~ roi + subject, data=df_data, whichRandom='subject', progress=F))
+```
+
+```{r}
+pander(pairwise_contrasts_one_cond(m_zsnr, var='roi', adjust_method='fdr', return_ci=TRUE)$res)
+```
+
+
+
+
+
+
+<br>   
+
+## ACF 
+
+```{r}
+# load ACF
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_aggrACFtrial.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive, z_snr))
+
+# save
+write.csv(df_data, 
+          file.path(save_path, sprintf('%s_atlas-%s_acfTrial.csv', save_prefix, atlas_name)), 
+          row.names=F)
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+```
+
+<br>  
+
+```{r}
+mu <- filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel)
+
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='roi', task='listen', 
+                    hline_spec=mu, hline_col='grey70', 
+                    pntsize_ind=2, pntalpha_ind=0.5, pnt_col='lut', dodge_width=0.2,
+                    pnt_col_mean='black', pntsize_mean=3, size_err=1.1, width_err=0,
+                    y_lims=ylims_acf, show_labels=F, hline_zero=show_zero_line) 
+plt
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_urear-%s_zbeatACFtrial', 
+                                          save_prefix, atlas_name, auditory_model_type)), 
+         plt, width=1.9, height=2.5, png=F)
+```
+
+<br>  
+
+```{r}
+m <- lmer(z_meterRel ~ roi + (1|subject), data=df_data)
+prep_anova_for_print(Anova(m, test='F'))
+```
+
+<br>  
+
+```{r}
+prep_bf_for_print(anovaBF(z_meterRel ~ roi + subject, data=df_data, whichRandom='subject', progress=F))
+```
+
+<br>  
+
+```{r}
+# posthoc 
+pander(pairwise_contrasts_one_cond(m, var='roi', adjust_method='fdr', return_ci=TRUE)$res)
+```
+
+<br>  
+
+```{r}
+df_against_mu <- ddply(df_data, c('roi'), ttest_against_mu, mu=mu)
+df_against_mu$pval <- p.adjust(df_against_mu$pval, method='fdr')
+df_against_mu$signif <- signifStars(df_against_mu$pval)
+pander(df_against_mu)
+```
+
+<br>  
+
+```{r}
+df_against_mu <- ddply(df_data, c('roi'), ttest_against_mu, mu=0)
+df_against_0$pval <- p.adjust(df_against_0$pval, method='fdr')
+df_against_0$signif <- signifStars(df_against_0$pval)
+pander(df_against_0)
+```
+
+
+
+
+<br> 
+
+# SMA
+
+
+<br>   
+
+Prepare contacts.  
+
+```{r, fig.width=2, fig.height=3}
+atlas_name <- 'sma'
+
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+# get only contacts in SMA and preSMA
+df_anat <- filter(df_anat, custom %in% c('SMA', 'preSMA'))
+
+# merge SMA and preSMA
+df_anat$custom <- fct_recode(df_anat$custom, SMA='SMA', SMA='preSMA')
+
+# subset responsive 
+df_anat_resp <- dplyr::inner_join(df_anat, 
+                                  df_zsnr_responsive %>% 
+                                      filter(rhythm==!!rhythm & task==!!task) %>%
+                                      select(subject, elec))
+# count
+df_count_all <- count_elec_roi(df_anat, 'custom')
+df_count_resp <- count_elec_roi(df_anat_resp, 'custom')
+pander(merge(df_count_all, df_count_resp, by='custom', suffixes=c('_total', '_responsive')) %>% rename(roi=custom))
+
+```
+
+```{r, fig.width=2, fig.height=3}
+plt <- plot_count_roi_resp(df_count_all, df_count_resp, 'custom')
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_responsive_counts', save_prefix, atlas_name)), 
+         plt, width=2, height=3, png=F)
+
+plt
+```
+
+
+
+
+<br>   
+
+## FFT 
+
+```{r}
+# load FFT
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# save
+write.csv(df_data, 
+          file.path(save_path, sprintf('%s_atlas-%s_fft.csv', save_prefix, atlas_name)), 
+          row.names=F)
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+```
+
+<br>    
+
+Plor the data.  
+
+```{r, fig.width=2, fig.height=3}
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='roi', task='listen', hline_spec=mu, hline_col='grey70', 
+                    pntsize_ind=2, pntalpha_ind=0.5, pnt_col='lut', dodge_width=0.2,
+                    pnt_col_mean='black', pntsize_mean=3, size_err=1.1, width_err=0,
+                    y_lims=ylims_fft, show_labels=F, hline_zero=show_zero_line) 
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_urear-%s_zbeatFFT', 
+                                          save_prefix, atlas_name, auditory_model_type)), 
+         plt, width=1, height=2.5, png=F)
+
+plt
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r}
+mu <- filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel)
+t.test(df_data$z_meterRel, mu=mu)
+```
+
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r}
+mu <- filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel)
+t.test(df_data$z_meterRel, mu=0)
+```
+
+
+
+<br>   
+
+## ACF 
+
+```{r}
+# load ACF
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_aggrACFtrial.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive, z_snr))
+
+# save
+write.csv(df_data, 
+          file.path(save_path, sprintf('%s_atlas-%s_acfTrial.csv', save_prefix, atlas_name)), 
+          row.names=F)
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+```
+
+
+<br>    
+
+Plot the data.  
+
+```{r, fig.width=2, fig.height=3}
+plt <- plot_feature(df_data, feature_name='z_meterRel', atlas='roi', task='listen', hline_spec=mu, hline_col='grey70', 
+                    pntsize_ind=2, pntalpha_ind=0.5, pnt_col='lut', dodge_width=0.2,
+                    pnt_col_mean='black', pntsize_mean=3, size_err=1.1, width_err=0,
+                    y_lims=ylims_acf, show_labels=F, hline_zero=show_zero_line) 
+
+save_fig(file.path(save_path_fig, sprintf('%s_atlas-%s_urear-%s_zbeatACFtrial', 
+                                          save_prefix, atlas_name, auditory_model_type)), 
+         plt, width=1, height=2.5, png=F)
+
+plt
+```
+
+<br>    
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r}
+mu <- filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel)
+t.test(df_data$z_meterRel, mu=mu)
+```
+
+<br>    
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r}
+mu <- filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel)
+t.test(df_data$z_meterRel, mu=0)
+```
+
+
+
+
+
+
+
+
+<br> 
+
+# Beat-index vs. SNR
+
+
+<br>
+
+Prepare contacts.  
+
+```{r}
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+# select ALL rois (auditory and associative, even if the given roi has small N responsive contacts)
+df_anat <- dplyr::filter(df_anat, custom %in% all_rois)
+```
+
+
+<br> 
+
+## FFT 
+
+```{r}
+# load FFT
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, select(df_anat, subject, elec, custom, hem))
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+# log transform 
+df_data$sum_magn_log <- log_trans(df_data$sum_magn)
+df_data$z_snr_log <- log_trans(df_data$z_snr)
+
+```
+
+<br> 
+
+Plot the data 
+
+```{r, fig.height=3, fig.width=5}
+ggplot(df_data, aes(z_snr_log, z_meterRel)) + 
+    geom_hline(aes(yintercept=0), data=df_urear_fft, color='black') +  
+    geom_hline(aes(yintercept=z_meterRel), data=df_urear_fft, color='gray80') +  
+    geom_point(color='#288ec9', alpha=0.5) + 
+    theme_cowplot() + 
+    facet_wrap(~rhythm)
+```
+
+<br> 
+
+Model beat-index vs z-snr for strongly-periodic rhythm.  
+
+```{r}
+# beat-index vs z-snr for strongly-periodic rhythm
+m <- lmer(z_meterRel ~ z_snr_log + (1|subject), data=filter(df_data, rhythm=='sp'))
+pander(summary(m)$coefficients)
+```
+
+```{r}
+prep_bf_for_print(lmBF(z_meterRel ~ z_snr_log, whichRandom="subject", 
+                       data=filter(df_data, rhythm=='sp'),
+                       progress=F))
+```
+
+<br> 
+
+Model beat-index vs z-snr for weakly-periodic rhythm.  
+
+```{r}
+# beat-index vs z-snr for weakly-periodic rhythm
+m <- lmer(z_meterRel ~ z_snr_log + (1|subject), data=filter(df_data, rhythm=='wp'))
+pander(summary(m)$coefficients)
+
+```
+
+```{r}
+prep_bf_for_print(lmBF(z_meterRel ~ z_snr_log, whichRandom="subject", 
+                       data=filter(df_data, rhythm=='wp'),
+                       progress=F))
+```
+
+
+<br>   
+
+## ACF 
+
+```{r}
+# load 
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_aggrACFtrial.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, select(df_anat, subject, elec, custom, hem))
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive, z_snr))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+# log transform 
+df_data$z_snr_log <- log_trans(df_data$z_snr)
+
+```
+
+<br> 
+
+Plot the data 
+
+```{r, fig.height=3, fig.width=5}
+ggplot(df_data, aes(z_snr_log, z_meterRel)) + 
+    geom_hline(aes(yintercept=0), data=df_urear_fft, color='black') +  
+    geom_hline(aes(yintercept=z_meterRel), data=df_urear_acf, color='gray80') +  
+    geom_point(color='#288ec9', alpha=0.5) + 
+    theme_cowplot() + 
+    facet_wrap(~rhythm)
+```
+
+<br> 
+
+Model beat-index vs z-snr for strongly-periodic rhythm.  
+
+```{r}
+# beat-index vs z-snr for strongly-periodic rhythm
+m <- lmer(z_meterRel ~ z_snr_log + (1|subject), data=filter(df_data, rhythm=='sp'))
+pander(summary(m)$coefficients)
+```
+
+```{r}
+prep_bf_for_print(lmBF(z_meterRel ~ z_snr_log, whichRandom="subject", 
+                       data=filter(df_data, rhythm=='sp'),
+                       progress=F))
+```
+
+<br> 
+
+Model beat-index vs z-snr for weakly-periodic rhythm.  
+
+```{r}
+# beat-index vs z-snr for weakly-periodic rhythm
+m <- lmer(z_meterRel ~ z_snr_log + (1|subject), data=filter(df_data, rhythm=='wp'))
+pander(summary(m)$coefficients)
+```
+
+```{r}
+prep_bf_for_print(lmBF(z_meterRel ~ z_snr_log, whichRandom="subject", 
+                       data=filter(df_data, rhythm=='wp'),
+                       progress=F))
+```
+
+
+
+<br> 
+
+# Beat-index: ttest each ROI
+
+Let's prepare tables with t-tests that can be pasted into the manuscript.  
+
+```{r}
+# function that exports to a nice table 
+prepare_doc <- function(df){
+    
+    df$statistic <- round(df$statistic, 2)
+    df$pval <- p_format(df$pval, digits=1)
+
+    ft <- flextable(df)
+    
+    # Rename Columns
+    ft <- set_header_labels(ft, 
+                            custom = "ROI", 
+                            statistic = "t", 
+                            pval = "P", 
+                            signif = '')
+    # Make Header Bold
+    ft <- flextable::bold(ft, part="header")
+    
+    # Align everything to the left
+    ft <- flextable::align(ft, align = "left", part = "all")
+    
+    # Set Font to Calibri (all parts: header and body)
+    ft <- flextable::font(ft, fontname = "Calibri", part = "all")
+    ft <- fontsize(ft, size = 12, part = "all")
+    
+    # Adjust columns to content width
+    ft <- autofit(ft)
+    
+    # Remove the fixed width property (this was making it unnecessarily wide)
+    ft <- set_table_properties(ft, layout = "autofit", width=1)
+    
+    doc <- read_docx()
+    doc <- body_add_flextable(doc, ft)
+    return(doc) 
+}
+
+```
+
+
+<br>    
+
+Prepare contacts.  
+
+```{r}
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+rois <- c(auditory_rois, assoc_rois)
+if (response == 'LFP'){
+    # remove SFG (too few contacts)
+    rois <- rois[!rois %in% c('SFG')]
+} else if (response == 'biLFP'){
+    # don't forget to remove 'MFG' from here for biLFP (too few contacts)
+    rois <- rois[!rois %in% c('SFG', 'MFG')]
+}
+             
+df_anat <- dplyr::filter(df_anat, custom %in% rois)
+df_anat$custom <- droplevels(df_anat$custom)
+df_anat$custom <- factor(df_anat$custom, levels=rois)
+
+# subset responsive 
+df_anat_resp <- dplyr::inner_join(df_anat, 
+                                  df_zsnr_responsive %>% 
+                                      filter(rhythm==!!rhythm & task==!!task) %>%
+                                      select(subject, elec))
+
+```
+
+
+<br>   
+
+## FFT 
+
+```{r}
+# load FFT
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+```
+
+<br> 
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r}
+mu <- filter(df_urear_fft, rhythm==!!rhythm) %>% pull(z_meterRel)
+
+df_against_mu <- ddply(df_data, c('roi'), ttest_against_mu, mu=mu)
+df_against_mu$pval <- p.adjust(df_against_mu$pval, method='fdr')
+df_against_mu$signif <- signifStars(df_against_mu$pval)
+
+doc <- prepare_doc(df_against_mu)
+print(doc, target=file.path(save_path_fig, sprintf("%s_ttests_against_mu_fft.docx", save_prefix)))
+
+```
+
+<br> 
+
+Compare beat-index against zero (one-sample t-test).  
+
+```{r}
+df_against_0 <- ddply(df_data, c('roi'), ttest_against_mu, mu=0)
+df_against_0$pval <- p.adjust(df_against_0$pval, method='fdr')
+df_against_0$signif <- signifStars(df_against_0$pval)
+
+doc <- prepare_doc(df_against_0)
+print(doc, target=file.path(save_path_fig, sprintf("%s_ttests_against_0_fft.docx", save_prefix)))
+
+```
+
+
+
+<br>    
+
+## ACF 
+
+```{r}
+# load ACF
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_aggrACFtrial.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset rhythm and task
+df_data <- filter(df_data, task==!!task & rhythm==!!rhythm)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive, z_snr))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+# rename atlas column name to "roi"
+df_data <- rename(df_data, roi=custom)
+
+```
+
+<br> 
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r}
+mu <- filter(df_urear_acf, rhythm==!!rhythm) %>% pull(z_meterRel)
+
+df_against_mu <- ddply(df_data, c('roi'), ttest_against_mu, mu=mu)
+df_against_mu$pval <- p.adjust(df_against_mu$pval, method='fdr')
+df_against_mu$signif <- signifStars(df_against_mu$pval)
+
+doc <- prepare_doc(df_against_mu)
+print(doc, target=file.path(save_path_fig, sprintf("%s_ttests_against_mu_acf.docx", save_prefix)))
+```
+
+<br> 
+
+Compare beat-index against the brainstem model (one-sample t-test).  
+
+```{r}
+df_against_0 <- ddply(df_data, c('roi'), ttest_against_mu, mu=0)
+df_against_0$pval <- p.adjust(df_against_0$pval, method='fdr')
+df_against_0$signif <- signifStars(df_against_0$pval)
+
+doc <- prepare_doc(df_against_0)
+print(doc, target=file.path(save_path_fig, sprintf("%s_ttests_against_0_acf.docx", save_prefix)))
+```
+
+
+
+<br> 
+
+# SNR: all ROIs  
+
+<br>   
+
+```{r}
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-%s_anatomy.csv', anat_prefix)))
+df_anat <- fixFactors(df_anat)
+
+rois <- c(auditory_rois, assoc_rois)
+if (response == 'LFP'){
+    # remove SFG (too few contacts)
+    rois <- rois[!rois %in% c('SFG')]
+} else if (response == 'biLFP'){
+    # don't forget to remove 'MFG' from here for biLFP (too few contacts)
+    rois <- rois[!rois %in% c('SFG', 'MFG')]
+}
+   
+df_anat <- dplyr::filter(df_anat, custom %in% rois)
+df_anat$custom <- droplevels(df_anat$custom)
+df_anat$custom <- factor(df_anat$custom, levels=rois)
+
+```
+
+
+<br>  
+
+Mean and SD of SNR per ROI.  
+
+```{r}
+# load FFT
+df_data <- read.csv(file.path(feat_path, sprintf('response-%s_avg-time_fftAggrFreq.csv', response)))
+df_data <- fixFactors(df_data)
+
+# subset task
+df_data <- filter(df_data, task==!!task)
+
+# subset in ROIs
+df_data <- dplyr::inner_join(df_data, df_anat)
+
+# add info about responsiveness
+df_data <- dplyr::inner_join(df_data, select(df_zsnr_all, subject, elec, rhythm, task, responsive))
+
+# subset responsive 
+df_data <- filter(df_data, responsive==TRUE)
+
+df_summary <- summarySE(df_data, 'z_snr', c('rhythm', 'custom'))
+df_summary$ci_low <- df_summary$z_snr - df_summary$ci
+df_summary$ci_high <- df_summary$z_snr + df_summary$ci
+df_summary <- select(df_summary, rhythm, custom, z_snr, ci_low, ci_high)
+
+prepare_doc <- function(df){
+    df$z_snr <- round(df$z_snr, 2)
+    df$ci_low <- round(df$ci_low, 2)
+    df$ci_high <- round(df$ci_high, 2)
+    df$rhythm <- mapvalues(df$rhythm, 
+                           from=c('sp', 'wp'), 
+                           to=c('strongly-periodic', 'weakly-periodic'))    
+    df$rhythm <- factor(df$rhythm, levels=c('weakly-periodic', 'strongly-periodic'))
+    df <- dplyr::arrange(df, rhythm)
+    ft <- flextable(df)
+    ft <- set_table_properties(
+        ft,
+        width = 1,
+        layout = "autofit"
+    )
+    doc <- read_docx()
+    doc <- body_add_flextable(doc, ft)
+}
+
+doc <- prepare_doc(df_summary)
+
+print(doc, target=file.path(save_path_fig,
+                            sprintf("response-%s_task-%s_zsnr.docx", response, task)))
+
+```
+
+
+<br> 
+
+# SNR: CAR vs. bipolar
+
+```{r}
+
+# NOTE: we won't select only responsive contacts to keep the comparison fair: indeed, the z-snr threshold was different
+# for LFP and biLFP, which would bias the comparison. 
+
+rois <- c("HG", "PT", "pSTG", "PP", "mSTG", "SMG", "SMC", "IFG", "MFG")
+
+# -------------
+# prepare  CAR 
+# ------------
+
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-TDT_elecs_all_anatomy.csv')))
+df_anat <- fixFactors(df_anat)
+
+df_anat <- dplyr::filter(df_anat, custom %in% rois)
+df_anat$custom <- droplevels(df_anat$custom)
+df_anat$custom <- factor(df_anat$custom, levels=rois)
+
+# load functional 
+df_car <- read.csv(file.path(feat_path, sprintf('response-LFP_avg-time_fftAggrFreq.csv')))
+df_car <- fixFactors(df_car)
+df_car <- subset(df_car, rhythm=='wp' & task=='listen')
+df_car <- select(df_car, c('subject', 'elec', 'rhythm', 'task', 'z_snr', 'sum_magn', 'z_meterRel'))
+df_car$response <- 'LFP'
+
+# subset ROIs only
+df_car <- dplyr::inner_join(df_car, df_anat)
+
+# -------------
+# prepare bipolar 
+# -------------
+
+# load anatomy
+df_anat <- read.csv(file.path(feat_path, sprintf('prefix-bipolar_elecs_all_anatomy.csv')))
+df_anat <- fixFactors(df_anat)
+
+df_anat <- dplyr::filter(df_anat, custom %in% rois)
+df_anat$custom <- droplevels(df_anat$custom)
+df_anat$custom <- factor(df_anat$custom, levels=rois)
+
+df_bi <- read.csv(file.path(feat_path, sprintf('response-biLFP_avg-time_fftAggrFreq.csv')))
+df_bi <- fixFactors(df_bi)
+df_bi <- subset(df_bi, rhythm=='wp' & task=='listen')
+df_bi <- select(df_bi, c('subject', 'elec', 'rhythm', 'task', 'z_snr', 'sum_magn', 'z_meterRel'))
+df_bi$response <- 'biLFP'
+
+# subset ROIs only
+df_bi <- dplyr::inner_join(df_bi, df_anat)
+
+# -------------
+# concatenate
+# -------------
+
+df <- rbind(df_car, df_bi)
+df$response <- factor(df$response, levels=c('LFP', 'biLFP'))
+
+# log transform 
+df$z_snr_log <- log_trans(df$z_snr)
+
+```
+
+
+```{r, fig.width=12, fig.height=4}
+
+df_summary <- summarySE(df, measurevar='z_snr_log', groupvars=c('response', 'custom'))
+
+cmap <- c(LFP='#aa62d1', biLFP='#cf9f11')
+
+plt <- ggplot(df, aes(y=z_snr_log)) + 
+    geom_half_violin(aes(split=response, fill=response),
+                     color=NA, alpha=0.2,
+                     position='identity', trim=FALSE) +
+    geom_segment(data=df_summary,
+               aes(x=0.05*(as.numeric(response)-1.5-0.3), 
+                   xend=0.05*(as.numeric(response)-1.5+0.3), 
+                   y=z_snr_log), 
+               color='black', size=0.5) +
+    geom_errorbar(data=df_summary,
+                  aes(x=0.05*(as.numeric(response)-1.5), ymin=z_snr_log-ci, ymax=z_snr_log+ci), 
+                  color='black', width=0, size=0.6) +
+    scale_fill_manual(values=cmap) +
+    theme_minimal() + 
+    theme(
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank()
+    ) + 
+    facet_wrap(~custom, nrow=1)
+
+plt
+
+save_fig(file.path(save_path_fig, sprintf('rhythm-wp_feat-logzsnr_LFP-vs-biLFP')), 
+         plt, width=10, height=2, png=F)
+
+```
+
+```{r}
+m <- lmer(z_snr_log ~ response + custom + (1|subject), data=df)
+prep_anova_for_print(Anova(m, test='F'))
+```
+
+```{r}
+prep_bf_for_print(anovaBF(z_snr_log ~ response + custom, data=df, whichRandom='subject', progress=F))
+```
+
+

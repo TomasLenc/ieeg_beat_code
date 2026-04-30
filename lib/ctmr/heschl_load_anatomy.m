@@ -1,0 +1,160 @@
+%% load imaging data
+config_paths;
+imgpath = sprintf('%s/anatomy', paper_data_dir);
+[imgmni, mniMesh] = group_load_img(SID, 'mni',imgpath,allHemi);
+imgNative = group_load_img(SID, 'native',imgpath,allHemi);
+%% load heschls mesh
+
+for i = 1:length(SID)
+    cs = SID{i};
+    switch allHemi{i}
+        case {'lh', 'rh'}
+            try
+                imgfile = fullfile(imgpath, cs,'Meshes', [cs '_'  allHemi{i} '_temporal_pial.mat']);
+                imgNative.(cs).temporal = getfield(load(imgfile, 'temporal'), 'temporal');
+            catch
+                fprintf(2,'no heschl mesh for subject %s. \n', cs);
+            end
+    end
+end
+
+mniMesh.temporal.lh = getfield(load(fullfile(imgpath,'cvs_avg35_inMNI152','Meshes','cvs_avg35_inMNI152_lh_temporal_pial.mat')), 'temporal');
+mniMesh.temporal.rh = getfield(load(fullfile(imgpath,'cvs_avg35_inMNI152','Meshes','cvs_avg35_inMNI152_rh_temporal_pial.mat')), 'temporal');
+
+%% bilateral patient
+%cs = 'EC180';
+cs = 'S08';
+imgfile = fullfile(imgpath, cs, 'Meshes', [cs '_lh_temporal_pial.mat']);
+imgNative.(cs).temporal_lh = getfield(load(imgfile, 'temporal'), 'temporal');
+
+imgfile = fullfile(imgpath, cs, 'Meshes', [cs '_rh_temporal_pial.mat']);
+imgNative.(cs).temporal_rh = getfield(load(imgfile, 'temporal'), 'temporal');
+
+imgfile = fullfile(imgpath, cs, 'Meshes', [cs '_lh_pial.mat']);
+imgNative.(cs).cortex_lh = getfield(load(imgfile, 'cortex'), 'cortex');
+
+imgfile = fullfile(imgpath, cs, 'Meshes', [cs '_rh_pial.mat']);
+imgNative.(cs).cortex_rh = getfield(load(imgfile, 'cortex'), 'cortex');
+
+%% manual corrections of anatomy
+imgNative.S02.anatomy([14 22 29 30],4) = {'pSTG'};
+
+if ismember('S07',SID)
+    els = contains(imgNative.S07.anatomy(:,1), 'MG');
+    imgNative.S07.anatomy(els,4) = {'planumpolare'};
+end
+
+if ismember('S09',SID)
+    els = contains(imgNative.S09.anatomy(:,1), 'PMG ') & contains(imgNative.S09.anatomy(:,4), 'temp_sup-Lateral');
+    imgNative.S09.anatomy(els,4) = {'planumpolare'};
+end
+%% anatomical areas for original anatomy
+includeAreas = { {'planumtemporale','Plan_tempo'},...
+    {'transverse', 'transv'},...
+    {'Plan_polar','planumpolare'},...
+    {'temp_sup-Lateral','superiortemporal','pSTG','mSTG'}};
+includeAreasName = { 'PT', 'HG', 'PP', 'pSTG','mSTG'};
+nAreas = length(includeAreasName);
+areaCols = [0 0 179; 0 179 0;179 0 179 ;179 0 0;179 179 0]/256;
+for csid = 1:length(SID)
+    cs = SID{csid};
+    imgNative.(cs).customAna = zeros(length(imgNative.(cs).anatomy),1);
+    for carea = 1:length(includeAreas)
+        for cname = 1:length(includeAreas{carea})
+            cel = strfind(imgNative.(cs).anatomy(:,4), includeAreas{carea}{cname});
+            cel = ~cellfun('isempty', cel);
+            imgNative.(cs).customAna(cel) = carea;
+        end
+    end
+    %% split stg into pstg and mid-ant stg
+    if ~isempty(imgmni.(cs))
+        imgNative.(cs).customAna(imgNative.(cs).customAna==4 & imgmni.(cs).elecmatrix(:,2)>=6) = 5;
+        crosstab(imgNative.(SID{csid}).customAna)
+    end
+end
+
+%% load electrode matrix with fixed STG division in native space
+fixed_ana_path = sprintf('%s/anatomy/', paper_data_dir);
+
+for csid = 1:length(SID)
+    cs = SID{csid};
+    try
+        imgNative.(cs).newAnatomy = getfield(load(fullfile(fixed_ana_path, cs, 'elecs', 'TDT_elecs_all_anatfix.mat'), 'anatomy'), 'anatomy');
+    catch
+        imgNative.(cs).newAnatomy = imgNative.(cs).anatomy;
+    end
+end
+
+imgNative.S02.newAnatomy([14 22 29 30],4) = {'pSTG'};
+
+%% anatomical areas with native space division
+
+includeAreas2 = { {'planumtemporale','Plan_tempo'},...
+    {'transverse', 'transv'},...
+    {'Plan_polar','planumpolare'},...
+    {'pSTG'}, {'mSTG'}};
+for csid = 1:length(SID)
+    cs = SID{csid};
+    imgNative.(cs).newCustomAna = imgNative.(cs).customAna;
+    for carea = 1:length(includeAreas2)
+        for cname = 1:length(includeAreas2{carea})
+            cel = strfind(imgNative.(cs).newAnatomy(:,4), includeAreas2{carea}{cname});
+            cel = ~cellfun('isempty', cel);
+            imgNative.(cs).newCustomAna(cel) = carea;
+        end
+    end
+end
+
+
+%% ---- change to 7 areas --- this is part of the Cell revision in Jan 2021
+new7AreaNames = {'PT', 'pmHG', 'alHG', 'PP', 'pSTGonset', 'pSTGno-ons', 'mSTG'};
+n7Areas = length(new7AreaNames);
+areaCols = [0 0 179; 0 179 0;179 0 179 ;179 0 0;179 179 0]/256;
+hgpm_color = [0.06, 0.69, 0.29];
+hgal_color = [0.06, 0.8, 0.8];
+area7Cols = [areaCols(1,:);hgpm_color; hgal_color; areaCols(3,:); [0 0 0]; areaCols(4,:);areaCols(5,:)];
+%% % Separate posteromedial from anterolateral HG
+for csi = 1:length(SID)
+    imgNative.(SID{csi}).CustomAna7areas = zeros(size(imgNative.(SID{csi}).newCustomAna));
+    imgNative.(SID{csi}).CustomAna7areas(imgNative.(SID{csi}).newCustomAna==1)=1;
+    imgNative.(SID{csi}).CustomAna7areas(imgNative.(SID{csi}).newCustomAna==2)=20;
+    imgNative.(SID{csi}).CustomAna7areas(imgNative.(SID{csi}).newCustomAna==3)=4;
+    imgNative.(SID{csi}).CustomAna7areas(imgNative.(SID{csi}).newCustomAna==4)=50;
+    imgNative.(SID{csi}).CustomAna7areas(imgNative.(SID{csi}).newCustomAna==5)=7;
+end
+% pm - - area 2
+imgNative.S01.CustomAna7areas([257 258 259 260 266]) = 2;
+imgNative.S02.CustomAna7areas([33]) = 2;
+imgNative.S03.CustomAna7areas([258 259 260 261]) = 2;
+% imgNative.S04.pmHG = [];
+imgNative.S05.CustomAna7areas([3 4 5])=2;
+imgNative.S06.CustomAna7areas([257 258 265]) = 2;
+% imgNative.S07.pmHG = [];
+imgNative.S08.CustomAna7areas([53 54]) = 2;
+imgNative.S09.CustomAna7areas([265 266 267 268]) = 2;
+
+% transversetemporal = {'transversetemporal','ctx_lh_G_temporal_transverse','ctx_rh_G_temporal_transverse',...
+%     'ctx_lh_S_temporal_transverse','ctx_rh_S_temporal_transverse', 'ctx_rh_G_temp_sup-G_T_transv', 'ctx_lh_G_temp_sup-G_T_transv'};
+ 
+for csi = 1:length(SID)
+    imgNative.(SID{csi}).CustomAna7areas(imgNative.(SID{csi}).CustomAna7areas==20)=3;
+end
+% for i=1:length(SID)
+%     subj = SID{i};
+%     elecmatrix = imgNative.(subj).elecmatrix;
+%     anatomy = imgNative.(subj).newAnatomy;
+%     hg_elecs = find(ismember(anatomy(:,4), transversetemporal));
+%     imgNative.(subj).alHG = setdiff(hg_elecs, imgNative.(subj).pmHG);
+% end
+% imgNative.S08.alHG = [];
+
+%% pSTG onset zone
+nmf_dir = sprintf('%s/NMF/',paper_data_dir);
+load(sprintf('%s/elecs_bestsubband_4bases.mat', nmf_dir)); % Clust 3 is onset pSTG
+for i=1:length(SID)
+    pSTG_onset_elecs = elecs{3}(elecs{3}(:,1)==i,2);
+    imgNative.(SID{i}).CustomAna7areas(pSTG_onset_elecs) = 5;
+    imgNative.(SID{i}).CustomAna7areas(imgNative.(SID{i}).CustomAna7areas==50) = 6;
+end
+
+
