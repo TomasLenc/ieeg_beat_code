@@ -1,0 +1,12 @@
+name: img_pipe
+channels:
+  - conda-forge
+  - base
+dependencies:
+  - python=3.12
+  - conda-forge::mne
+  - pip: 
+    - PyMCubes>=0.0.6
+    - nipy>=0.4.0
+    - colorama
+    - cython
